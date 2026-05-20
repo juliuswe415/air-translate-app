@@ -1,7 +1,5 @@
 'use client';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -13,96 +11,130 @@ import {
 } from '@/components/ui/select';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { PauseIcon, PlayIcon } from '@phosphor-icons/react/dist/ssr';
-import { ReactNode, useState } from 'react';
+import { ReactNode, useMemo, useState } from 'react';
 
-export const Room = ({ id, defaultLanguage }: { id: string; defaultLanguage: string }): ReactNode => {
-  const [room, setRoom] = useState<string>(id);
+export const Room = ({
+  id,
+  defaultLanguage,
+}: {
+  id: string;
+  defaultLanguage: string;
+}): ReactNode => {
   const [language, setLanguage] = useState(defaultLanguage);
 
-  const { onToggleMic, micEnabled, captions, debugLogs } = useWebRTC(room, language);
+  const { onToggleMic, micEnabled, captions, debugLogs } =
+    useWebRTC(id, language);
 
-  const onRoom = (e: React.MouseEvent<HTMLButtonElement>): void => {
-    e.preventDefault();
-    const elem = document.getElementById('roomId') as HTMLInputElement;
-    setRoom(elem.value);
+  const debugText = useMemo(() => {
+    return debugLogs
+      .map((item) => `[${item.time}] ${item.message}`)
+      .join('\n');
+  }, [debugLogs]);
+
+  const downloadDebugLogs = (): void => {
+    const blob = new Blob([debugText], {
+      type: 'text/plain;charset=utf-8',
+    });
+
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+
+    a.href = url;
+    a.download = `air-translate-debug-${Date.now()}.txt`;
+
+    document.body.appendChild(a);
+
+    a.click();
+
+    a.remove();
+
+    URL.revokeObjectURL(url);
   };
 
   return (
-    <div className='w-full flex flex-col items-center gap-4'>
-      {room === '' ? (
-        <>
-          <div className='grid w-full items-center gap-3'>
-            <Label htmlFor='roomId'>Name</Label>
-            <Input id='roomId' defaultValue={room} />
-          </div>
-          <div className='w-full'>
-            <Button size='lg' onClick={onRoom}>
-              Conectar
-            </Button>
-          </div>
-        </>
-      ) : (
-        <>
-          <div>{room}</div>
+    <div className='flex flex-col items-center gap-6 w-full'>
+      <div className='text-2xl font-semibold'>{id}</div>
 
-          <div className='w-fit'>
-            <input type='hidden' id='mic' value={micEnabled ? '1' : '0'} />
-            <Button onClick={onToggleMic} size='lg' variant={micEnabled ? 'secondary' : 'default'}>
-              {micEnabled ? <PauseIcon className='size-18 sm:size-20' /> : <PlayIcon className='size-18 sm:size-20' />}
-            </Button>
-          </div>
+      <input
+        id='mic'
+        type='hidden'
+        value={micEnabled ? '1' : '0'}
+        readOnly
+      />
 
-          <div className='w-full max-w-xs'>
-            <div>Translate to</div>
-            <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger className='w-full max-w-xs'>
-                <SelectValue placeholder='Your language' />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectLabel>Language</SelectLabel>
-                  <SelectItem value='eng'>English</SelectItem>
-                  <SelectItem value='spa'>Español</SelectItem>
-                  <SelectItem value='fra'>French</SelectItem>
-                  <SelectItem value='deu'>German</SelectItem>
-                  <SelectItem value='ita'>Italian</SelectItem>
-                  <SelectItem value='por'>Portuguese</SelectItem>
-                  <SelectItem value='rus'>Russian</SelectItem>
-                  <SelectItem value='ara'>Arabic</SelectItem>
-                  <SelectItem value='hin'>Hindi</SelectItem>
-                  <SelectItem value='zho'>Mandarin Chinese</SelectItem>
-                  <SelectItem value='jpn'>Japanese</SelectItem>
-                  <SelectItem value='kor'>Korean</SelectItem>
-                  <SelectItem value='tur'>Turkish</SelectItem>
-                  <SelectItem value='vie'>Vietnamese</SelectItem>
-                  <SelectItem value='urd'>Urdu</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
+      <Button
+        onClick={onToggleMic}
+        className='rounded-full size-40'
+      >
+        {micEnabled ? (
+          <PauseIcon className='size-20' />
+        ) : (
+          <PlayIcon className='size-20' />
+        )}
+      </Button>
 
-          <div className='w-full max-w-xs mt-4 rounded-xl border p-3 text-xs bg-slate-50 dark:bg-slate-800'>
-            <div className='font-semibold mb-2'>Debug</div>
-            <div className='max-h-48 overflow-auto flex flex-col gap-1'>
-              {debugLogs.map((item, index) => (
-                <div key={index}>
-                  <span className='opacity-60'>{item.time}</span> {item.message}
-                </div>
-              ))}
+      <div className='w-full max-w-xs'>
+        <div className='mb-2'>Translate to</div>
+
+        <Select value={language} onValueChange={setLanguage}>
+          <SelectTrigger className='w-full'>
+            <SelectValue placeholder='Language' />
+          </SelectTrigger>
+
+          <SelectContent>
+            <SelectGroup>
+              <SelectLabel>Language</SelectLabel>
+
+              <SelectItem value='eng'>English</SelectItem>
+              <SelectItem value='spa'>Spanish</SelectItem>
+              <SelectItem value='fra'>French</SelectItem>
+              <SelectItem value='deu'>German</SelectItem>
+              <SelectItem value='ita'>Italian</SelectItem>
+              <SelectItem value='por'>Portuguese</SelectItem>
+              <SelectItem value='rus'>Russian</SelectItem>
+              <SelectItem value='jpn'>Japanese</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className='w-full max-w-md rounded-xl border p-3 text-xs bg-slate-50 dark:bg-slate-900'>
+        <div className='font-semibold mb-2'>Debug</div>
+
+        <div className='max-h-64 overflow-auto flex flex-col gap-1'>
+          {debugLogs.map((item, index) => (
+            <div key={index}>
+              <span className='opacity-60'>
+                {item.time}
+              </span>{' '}
+              {item.message}
             </div>
-          </div>
+          ))}
+        </div>
 
-          <div className='w-full fixed bottom-0 flex flex-col items-center max-h-40 p-2 pb-3 overflow-auto bg-gradient-to-b from-white dark:from-black to-slate-200/70n dark:to-slate-900/70'>
-            <div className='max-w-lg flex flex-col gap-3 items-center'>
-              {captions.map((item, index) => (
-                <div key={index} className='odd:font-semibold text-center'>
-                  {item?.text}
-                </div>
-              ))}
-            </div>
+        <div className='mt-3'>
+          <Button
+            size='sm'
+            variant='outline'
+            onClick={downloadDebugLogs}
+            className='w-full'
+          >
+            Download debug log
+          </Button>
+        </div>
+      </div>
+
+      <div className='w-full max-w-md flex flex-col gap-2'>
+        {captions.map((item, index) => (
+          <div
+            key={index}
+            className='rounded-lg border p-2 text-sm'
+          >
+            {item?.text}
           </div>
-        </>
-      )}
+        ))}
+      </div>
     </div>
   );
 };
