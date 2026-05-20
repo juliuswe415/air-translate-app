@@ -116,7 +116,7 @@ export const Room = ({
         <div className='mt-3'>
           <Button
             size='sm'
-            variant='outline'
+            variant='secondary'
             onClick={downloadDebugLogs}
             className='w-full'
           >
