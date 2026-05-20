@@ -2,6 +2,11 @@
 import { useEffect, useRef, useState } from 'react';
 import io from 'socket.io-client';
 
+type DebugEntry = {
+  time: string;
+  message: string;
+};
+
 export function useWebRTC(roomId: string, lang: string) {
   const socket = useRef<any>(null);
   const peersRef = useRef<{ [id: string]: RTCPeerConnection }>({});
@@ -10,105 +15,176 @@ export function useWebRTC(roomId: string, lang: string) {
 
   const [micEnabled, setMicEnabled] = useState(false);
   const [captions, setCaptions] = useState<any[]>([]);
+  const [debugLogs, setDebugLogs] = useState<DebugEntry[]>([]);
+
+  const debug = (message: string) => {
+    const time = new Date().toLocaleTimeString();
+    console.log(`[AirTranslate debug] ${message}`);
+    setDebugLogs((prev) => [{ time, message }, ...prev].slice(0, 80));
+  };
 
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId) {
+      debug('No roomId, skipping socket init');
+      return;
+    }
 
-    socket.current = io(process.env.NEXT_PUBLIC_URL_SOCKET, { transports: ['websocket'], withCredentials: true });
+    const socketUrl = process.env.NEXT_PUBLIC_URL_SOCKET;
+    debug(`Room: ${roomId}`);
+    debug(`Target language: ${lang}`);
+    debug(`NEXT_PUBLIC_URL_SOCKET: ${socketUrl || 'MISSING'}`);
+
+    if (!socketUrl) {
+      debug('ERROR: NEXT_PUBLIC_URL_SOCKET is missing');
+      return;
+    }
+
+    socket.current = io(socketUrl, {
+      transports: ['websocket'],
+      withCredentials: true,
+    });
+
+    socket.current.on('connect', () => {
+      debug(`Socket connected: ${socket.current.id}`);
+      socket.current.emit('join', roomId);
+      debug(`Emitted join: ${roomId}`);
+    });
+
+    socket.current.on('connect_error', (error: any) => {
+      debug(`Socket connect_error: ${error?.message || String(error)}`);
+    });
+
+    socket.current.on('disconnect', (reason: string) => {
+      debug(`Socket disconnected: ${reason}`);
+    });
+
+    socket.current.onAny((event: string, ...args: any[]) => {
+      debug(`Socket event received: ${event}`);
+    });
 
     const init = async () => {
-      // 1. Capture microphone
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log('🎤 mic tracks:', stream.getAudioTracks());
+      try {
+        debug('Requesting microphone permission...');
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // ✅ Start with mic OFF
-      for (const track of stream.getAudioTracks()) {
-        track.enabled = false;
-      }
-      localStreamRef.current = stream;
+        const tracks = stream.getAudioTracks();
+        debug(`Microphone stream ready. Audio tracks: ${tracks.length}`);
 
-      // 🔊 Setup AudioContext + Worklet
-      const audioCtx = new AudioContext({ sampleRate: 16000 });
-      audioCtxRef.current = audioCtx;
+        for (const track of tracks) {
+          debug(`Track: label="${track.label}", enabled=${track.enabled}, state=${track.readyState}`);
+          track.enabled = false;
+        }
 
-      await audioCtx.audioWorklet.addModule('/recorder-worklet.js');
+        localStreamRef.current = stream;
 
-      const source = audioCtx.createMediaStreamSource(stream);
-      const worklet = new AudioWorkletNode(audioCtx, 'mic-processor');
-      source.connect(worklet);
+        debug('Creating AudioContext with sampleRate 16000...');
+        const audioCtx = new AudioContext({ sampleRate: 16000 });
+        audioCtxRef.current = audioCtx;
+        debug(`AudioContext state: ${audioCtx.state}, sampleRate: ${audioCtx.sampleRate}`);
 
-      // 3. Handle audio chunks
-      let buffer: Float32Array[] = [];
-      const chunkSize = 4096;
+        debug('Loading /recorder-worklet.js...');
+        await audioCtx.audioWorklet.addModule('/recorder-worklet.js');
+        debug('Audio worklet loaded');
 
-      worklet.port.onmessage = (event: any) => {
-        const audioData: Float32Array = event.data.data;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const worklet = new AudioWorkletNode(audioCtx, 'mic-processor');
+        source.connect(worklet);
+        debug('Audio worklet connected');
 
-        const micState = (document?.getElementById('mic') as HTMLInputElement)?.value;
-        if (micState === '1') {
-          // 🎙️ speaking
-          buffer.push(audioData);
+        let buffer: Float32Array[] = [];
+        const chunkSize = 4096;
+        let chunkCount = 0;
 
-          const total = buffer.reduce((a, arr) => a + arr.length, 0);
-          if (total >= chunkSize) {
-            const merged = new Float32Array(total);
-            let offset = 0;
-            for (const arr of buffer) {
-              merged.set(arr, offset);
-              offset += arr.length;
+        worklet.port.onmessage = (event: any) => {
+          const audioData: Float32Array = event.data.data;
+
+          const micState = (document?.getElementById('mic') as HTMLInputElement)?.value;
+          if (micState === '1') {
+            buffer.push(audioData);
+
+            const total = buffer.reduce((a, arr) => a + arr.length, 0);
+            if (total >= chunkSize) {
+              const merged = new Float32Array(total);
+              let offset = 0;
+
+              for (const arr of buffer) {
+                merged.set(arr, offset);
+                offset += arr.length;
+              }
+
+              buffer = [];
+
+              const int16 = new Int16Array(merged.length);
+              for (let i = 0; i < merged.length; i++) {
+                const s = Math.max(-1, Math.min(1, merged[i]));
+                int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+              }
+
+              chunkCount += 1;
+
+              if (socket.current?.connected) {
+                socket.current.emit('audio-chunk', int16.buffer);
+                if (chunkCount <= 5 || chunkCount % 20 === 0) {
+                  debug(`Emitted audio-chunk #${chunkCount}, bytes=${int16.buffer.byteLength}`);
+                }
+              } else {
+                debug(`WARNING: audio chunk ready but socket not connected`);
+              }
             }
-            buffer = [];
-
-            // Float32 → Int16
-            const int16 = new Int16Array(merged.length);
-            for (let i = 0; i < merged.length; i++) {
-              const s = Math.max(-1, Math.min(1, merged[i]));
-              int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-            }
-
-            socket.current.emit('audio-chunk', int16.buffer);
           }
-        }
-      };
+        };
 
-      // 2. Join room
-      socket.current.emit('join', roomId);
+        socket.current.on('new-peer', async (peerId: string) => {
+          debug(`New peer: ${peerId}`);
+          const pc = createPeer(peerId, true, stream);
+          peersRef.current[peerId] = pc;
+        });
 
-      // 3. Handle new peer
-      socket.current.on('new-peer', async (peerId: string) => {
-        const pc = createPeer(peerId, true, stream);
-        peersRef.current[peerId] = pc;
-      });
+        socket.current.on('peer-disconnect', (peerId: string) => {
+          debug(`Peer disconnected: ${peerId}`);
 
-      // 5. Peer disconnect cleanup
-      socket.current.on('peer-disconnect', (peerId: string) => {
-        if (peersRef.current[peerId]) {
-          peersRef.current[peerId].close();
-          delete peersRef.current[peerId];
-        }
-        const el = document.getElementById(`audio-${peerId}`);
-        if (el) el.remove();
-      });
+          if (peersRef.current[peerId]) {
+            peersRef.current[peerId].close();
+            delete peersRef.current[peerId];
+          }
 
-      // 6. receive transcription from server
-      socket.current.on('stt-text', (props: object) => {
-        console.log(props);
-        setCaptions((prev) => [props, ...prev]);
-      });
+          const el = document.getElementById(`audio-${peerId}`);
+          if (el) el.remove();
+        });
 
-      socket.current.on('tts-audio', ({ audio, format }: any) => {
-        const audioBlob = new Blob([Uint8Array.from(atob(audio), (c) => c.charCodeAt(0))], { type: `audio/${format}` });
-        const url = URL.createObjectURL(audioBlob);
-        const audioEl = new Audio(url);
-        audioEl.play();
-      });
+        socket.current.on('stt-text', (props: any) => {
+          debug(`Received stt-text: ${props?.text || JSON.stringify(props)}`);
+          setCaptions((prev) => [props, ...prev]);
+        });
+
+        socket.current.on('tts-audio', ({ audio, format }: any) => {
+          debug(`Received tts-audio: format=${format}, base64 length=${audio?.length || 0}`);
+
+          const audioBlob = new Blob([Uint8Array.from(atob(audio), (c) => c.charCodeAt(0))], {
+            type: `audio/${format}`,
+          });
+
+          const url = URL.createObjectURL(audioBlob);
+          const audioEl = new Audio(url);
+
+          audioEl
+            .play()
+            .then(() => debug('TTS audio playback started'))
+            .catch((error) => debug(`TTS audio playback error: ${error?.message || String(error)}`));
+        });
+      } catch (error: any) {
+        debug(`INIT ERROR: ${error?.message || String(error)}`);
+      }
     };
 
     init();
 
     return () => {
-      socket.current.disconnect();
+      debug('Cleaning up room connection');
+
+      if (socket.current) socket.current.disconnect();
       audioCtxRef.current?.close();
+
       for (const key in peersRef.current) {
         peersRef.current[key].close();
       }
@@ -116,34 +192,50 @@ export function useWebRTC(roomId: string, lang: string) {
   }, [roomId]);
 
   const onToggleMic = async () => {
-    if (!localStreamRef.current) return;
+    debug(`Mic toggle clicked. Current micEnabled=${micEnabled}`);
+
+    if (!localStreamRef.current) {
+      debug('ERROR: localStreamRef is missing; microphone not initialized');
+      return;
+    }
+
     const newState = !micEnabled;
     setMicEnabled(newState);
 
     if (audioCtxRef.current?.state === 'suspended') {
+      debug('AudioContext suspended, resuming...');
       await audioCtxRef.current.resume();
-    }
-    // ✅ Toggle mic tracks
-    for (const track of localStreamRef.current.getAudioTracks()) {
-      track.enabled = newState;
+      debug(`AudioContext state after resume: ${audioCtxRef.current.state}`);
     }
 
-    if (!newState) socket.current.emit('audio-stop', { roomId, lang });
+    for (const track of localStreamRef.current.getAudioTracks()) {
+      track.enabled = newState;
+      debug(`Track "${track.label}" enabled=${track.enabled}, state=${track.readyState}`);
+    }
+
+    if (!newState) {
+      debug(`Emitting audio-stop. roomId=${roomId}, lang=${lang}`);
+      socket.current?.emit('audio-stop', { roomId, lang });
+    } else {
+      debug('Mic started. Speak now.');
+    }
   };
 
   const createPeer = (peerId: string, initiator: boolean, stream: MediaStream) => {
+    debug(`Creating RTCPeerConnection for peer=${peerId}, initiator=${initiator}`);
+
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     });
 
-    // Send my mic
     for (const track of stream.getTracks()) {
       pc.addTrack(track, stream);
     }
 
-    // ICE candidates
     pc.onicecandidate = (e) => {
       if (e.candidate) {
+        debug(`Sending ICE candidate to ${peerId}`);
+
         socket.current.emit('signal', {
           target: peerId,
           data: { candidate: e.candidate },
@@ -151,8 +243,9 @@ export function useWebRTC(roomId: string, lang: string) {
       }
     };
 
-    // Remote audio
     pc.ontrack = (e) => {
+      debug(`Received remote audio track from ${peerId}`);
+
       const remoteStream = e.streams[0];
       const audio = document.createElement('audio');
       audio.id = `audio-${peerId}`;
@@ -163,6 +256,8 @@ export function useWebRTC(roomId: string, lang: string) {
 
     if (initiator) {
       pc.createOffer().then((offer) => {
+        debug(`Created offer for ${peerId}`);
+
         pc.setLocalDescription(offer);
         socket.current.emit('signal', {
           target: peerId,
@@ -174,5 +269,5 @@ export function useWebRTC(roomId: string, lang: string) {
     return pc;
   };
 
-  return { onToggleMic, micEnabled, captions };
+  return { onToggleMic, micEnabled, captions, debugLogs };
 }
