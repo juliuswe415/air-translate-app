@@ -99,19 +99,17 @@ export const Room = ({
         </Select>
       </div>
 
+      <div className='w-full max-w-md text-right text-xs'>
+        <button
+          onClick={downloadDebugLogs}
+          className='underline opacity-70 hover:opacity-100'
+        >
+          Download debug log
+        </button>
+      </div>
+
       <div className='w-full max-w-md rounded-xl border p-3 text-xs bg-slate-50 dark:bg-slate-900'>
         <div className='font-semibold mb-2'>Debug</div>
-
-        <div className='mt-3'>
-          <Button
-            size='sm'
-            variant='secondary'
-            onClick={downloadDebugLogs}
-            className='w-full'
-          >
-            Download debug log
-          </Button>
-        </div>
 
         <div className='max-h-64 overflow-auto flex flex-col gap-1'>
           {debugLogs.map((item, index) => (
