@@ -2,7 +2,15 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { PauseIcon, PlayIcon } from '@phosphor-icons/react/dist/ssr';
 import { ReactNode, useState } from 'react';
@@ -11,7 +19,7 @@ export const Room = ({ id, defaultLanguage }: { id: string; defaultLanguage: str
   const [room, setRoom] = useState<string>(id);
   const [language, setLanguage] = useState(defaultLanguage);
 
-  const { onToggleMic, micEnabled, captions } = useWebRTC(room, language);
+  const { onToggleMic, micEnabled, captions, debugLogs } = useWebRTC(room, language);
 
   const onRoom = (e: React.MouseEvent<HTMLButtonElement>): void => {
     e.preventDefault();
@@ -36,6 +44,7 @@ export const Room = ({ id, defaultLanguage }: { id: string; defaultLanguage: str
       ) : (
         <>
           <div>{room}</div>
+
           <div className='w-fit'>
             <input type='hidden' id='mic' value={micEnabled ? '1' : '0'} />
             <Button onClick={onToggleMic} size='lg' variant={micEnabled ? 'secondary' : 'default'}>
@@ -72,6 +81,17 @@ export const Room = ({ id, defaultLanguage }: { id: string; defaultLanguage: str
             </Select>
           </div>
 
+          <div className='w-full max-w-xs mt-4 rounded-xl border p-3 text-xs bg-slate-50 dark:bg-slate-800'>
+            <div className='font-semibold mb-2'>Debug</div>
+            <div className='max-h-48 overflow-auto flex flex-col gap-1'>
+              {debugLogs.map((item, index) => (
+                <div key={index}>
+                  <span className='opacity-60'>{item.time}</span> {item.message}
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className='w-full fixed bottom-0 flex flex-col items-center max-h-40 p-2 pb-3 overflow-auto bg-gradient-to-b from-white dark:from-black to-slate-200/70n dark:to-slate-900/70'>
             <div className='max-w-lg flex flex-col gap-3 items-center'>
               {captions.map((item, index) => (
@@ -86,4 +106,3 @@ export const Room = ({ id, defaultLanguage }: { id: string; defaultLanguage: str
     </div>
   );
 };
-//
